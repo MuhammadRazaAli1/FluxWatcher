@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""StreamSentinel entry point.
-
-  python run.py                    live dashboard in your browser
-  python run.py --headless         fast offline evaluation + report
-"""
 from __future__ import annotations
 
 import argparse
