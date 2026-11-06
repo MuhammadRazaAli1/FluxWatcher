@@ -1,4 +1,4 @@
-# StreamSentinel
+# FluxWatcher
 
 Real-time multivariate anomaly detection for streaming sensor data, with online
 learning, a live dashboard and a reproducible evaluation harness.
