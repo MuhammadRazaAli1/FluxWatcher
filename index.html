@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StreamSentinel · Real-time anomaly detection</title>
+<style>
+  :root{
+    --bg:#0b1020; --panel:#121a30; --panel2:#18223f; --line:#26335a; --text:#e6ebff; --muted:#8e9bc4;
+    --blue:#5aa9ff; --amber:#ffb454; --red:#ff5d73; --green:#38d9a9; --violet:#a78bfa;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);
+    font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center;justify-content:space-between;
+    padding:14px 22px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#121a35,#0b1020)}
+  h1{font-size:18px;margin:0;letter-spacing:.2px}
+  h1 small{color:var(--muted);font-weight:400;margin-left:8px}
+  .controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  button,select{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;
+    padding:7px 12px;font:inherit;cursor:pointer}
+  button:hover,select:hover{border-color:var(--blue)}
+  button.primary{background:#2a4a8f;border-color:#3d66bf}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .pill{padding:5px 12px;border-radius:999px;font-weight:600;font-size:13px;border:1px solid var(--line);
+    background:var(--panel2);white-space:nowrap}
+  .pill.ok{color:var(--green);border-color:#1f6b57}
+  .pill.warn{color:var(--amber);border-color:#7a5a25}
+  .pill.bad{color:var(--red);border-color:#7d2c3a;animation:pulse 1s infinite}
+  .pill.off{color:var(--muted)}
+  @keyframes pulse{50%{box-shadow:0 0 0 4px rgba(255,93,115,.18)}}
+  main{padding:18px 22px 40px;max-width:1500px;margin:0 auto}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .kpi .l{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.6px}
+  .kpi .v{font-size:24px;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
+  .grid{display:grid;grid-template-columns:2fr 1fr;gap:16px}
+  @media (max-width:1000px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:14px}
+  .card h2{font-size:13px;margin:0 0 6px;color:var(--muted);font-weight:600;display:flex;
+    justify-content:space-between;gap:8px;text-transform:uppercase;letter-spacing:.6px}
+  .card h2 b{color:var(--text);text-transform:none;letter-spacing:0;font-variant-numeric:tabular-nums}
+  canvas{width:100%;height:150px;display:block}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;color:var(--muted);font-size:12px;margin:2px 0 12px}
+  .legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-2px}
+  .log{max-height:520px;overflow:auto;font-size:13px}
+  .log div{padding:6px 8px;border-left:3px solid var(--line);margin-bottom:6px;background:var(--panel2);border-radius:0 6px 6px 0}
+  .log .alert{border-color:var(--red)} .log .clear{border-color:var(--green)}
+  .log .truth{border-color:var(--violet)} .log .info{border-color:var(--blue)}
+  .log time{color:var(--muted);margin-right:8px;font-variant-numeric:tabular-nums}
+  .empty{color:var(--muted);padding:8px}
+  #toast{position:fixed;right:18px;bottom:18px;background:#1b2850;border:1px solid var(--blue);padding:10px 14px;
+    border-radius:10px;opacity:0;transform:translateY(8px);transition:.25s;pointer-events:none;max-width:320px}
+  #toast.show{opacity:1;transform:none}
+  .progress{height:6px;background:var(--panel2);border-radius:4px;overflow:hidden;margin-top:8px;display:none}
+  .progress div{height:100%;width:0;background:var(--blue);transition:width .3s}
+  footer{color:var(--muted);font-size:12px;margin-top:6px}
+</style>
+</head>
+<body>
+<header>
+  <h1>StreamSentinel<small>real-time multivariate anomaly detection</small></h1>
+  <div class="controls">
+    <span id="pill" class="pill off">Connecting…</span>
+    <button id="btnPause">Pause</button>
+    <label>Speed
+      <select id="speed">
+        <option value="0.5">0.5×</option><option value="1" selected>1×</option>
+        <option value="2">2×</option><option value="4">4×</option>
+      </select>
+    </label>
+    <select id="kind">
+      <option value="">Random anomaly</option>
+      <option value="spike">Spike</option>
+      <option value="level_shift">Level shift</option>
+      <option value="drift">Drift</option>
+      <option value="variance_burst">Variance burst</option>
+    </select>
+    <button id="btnInject" class="primary">⚡ Inject anomaly</button>
+    <label>Sensitivity
+      <select id="sens"><option value="low">Low</option><option value="normal" selected>Normal</option><option value="high">High</option></select>
+    </label>
+    <button id="btnCsv">Load CSV…</button><input type="file" id="file" accept=".csv,.txt,text/csv" hidden>
+    <button id="btnSim">Simulator</button>
+    <button id="btnDl">Download alerts</button>
+  </div>
+</header>
+<main>
+  <div class="progress" id="progress"><div></div></div>
+  <div class="card" id="notes" style="display:none;font-size:13px;margin-top:14px"></div>
+  <section class="kpis" id="kpis" style="margin-top:14px"></section>
+  <div class="legend">
+    <span><i style="background:var(--blue)"></i>measured</span>
+    <span><i style="background:var(--amber)"></i>one-step forecast</span>
+    <span><i style="background:rgba(255,93,115,.45)"></i>alert raised by the model</span>
+    <span id="legTruth"><i style="background:var(--violet)"></i>known fault / ground truth</span>
+  </div>
+  <div class="grid">
+    <section id="charts"></section>
+    <aside>
+      <div class="card"><h2>Event log</h2><div class="log" id="log"><div class="empty">Waiting for events…</div></div></div>
+      <footer>Runs entirely in your browser: nothing is uploaded. Metrics are computed live against the simulator's ground truth. An episode counts as
+        <i>detected</i> if an alert is active at any point during it.</footer>
+    </aside>
+  </div>
+</main>
+<div id="toast"></div>
+<script src="engine.js"></script>
+<script>
+(() => {
+  "use strict";
+  const MAXPTS = 400;
+  const COLORS = {blue:"#5aa9ff", amber:"#ffb454", red:"#ff5d73", violet:"#a78bfa", grid:"#26335a", text:"#8e9bc4"};
+  const state = {since:-1, pts:[], sensors:[], connected:false, paused:false, prevA:0, prevY:0,
+                 charts:[], scoreChart:null, kpis:{}, logItems:[], curTs:null, built:false, drawQueued:false};
+  const $ = id => document.getElementById(id);
+
+  // ---------- helpers
+  const fmtPct = v => v == null ? "—" : (v*100).toFixed(0) + "%";
+  const fmtNum = (v, d=1) => v == null ? "—" : Number(v).toFixed(d);
+  function toast(msg){const t=$("toast");t.textContent=msg;t.classList.add("show");
+    clearTimeout(toast.h);toast.h=setTimeout(()=>t.classList.remove("show"),2600);}
+  // ---------- UI construction
+  function build(sensors){
+    const box = $("charts"); box.textContent = ""; state.charts = [];
+    sensors.forEach((s, i) => {
+      const card = document.createElement("div"); card.className = "card";
+      const h = document.createElement("h2");
+      const name = document.createElement("span"); name.textContent = `${s.name} (${s.unit})`;
+      const val = document.createElement("b"); val.id = "val" + i; val.textContent = "—";
+      h.append(name, val);
+      const cv = document.createElement("canvas");
+      card.append(h, cv); box.append(card);
+      state.charts.push({canvas:cv, idx:i});
+    });
+    const card = document.createElement("div"); card.className = "card";
+    const h = document.createElement("h2");
+    const t = document.createElement("span"); t.textContent = "Anomaly score (≥ 1 = anomalous)";
+    const val = document.createElement("b"); val.id = "valScore"; val.textContent = "—";
+    h.append(t, val);
+    const cv = document.createElement("canvas"); cv.style.height = "130px";
+    card.append(h, cv); box.append(card);
+    state.scoreChart = {canvas:cv};
+
+    const defs = [["ticks","Ticks processed"],["alerts","Alert events"],["episodes","Episodes detected"],["delay","Mean delay (ticks)"],
+      ["falsealerts","False alert events"],["precision","Precision"],["recall","Recall"],["f1","F1 (point-wise)"]];
+    const k = $("kpis"); k.textContent = ""; state.kpis = {};
+    defs.forEach(([id,label]) => {
+      const d = document.createElement("div"); d.className = "kpi";
+      const l = document.createElement("div"); l.className = "l"; l.textContent = label;
+      const v = document.createElement("div"); v.className = "v"; v.textContent = "—";
+      d.append(l, v); k.append(d); state.kpis[id] = v;
+    });
+    state.built = true;
+  }
+
+  // ---------- drawing
+  function prepare(canvas){
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if(canvas.width !== Math.round(w*dpr) || canvas.height !== Math.round(h*dpr)){
+      canvas.width = Math.round(w*dpr); canvas.height = Math.round(h*dpr);
+    }
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.clearRect(0,0,w,h);
+    return {ctx, w, h};
+  }
+  function xOf(j, n, left, width){ return left + ((MAXPTS - n + j) / (MAXPTS - 1)) * width; }
+
+  function drawChart(chart){
+    const {ctx, w, h} = prepare(chart.canvas);
+    const pts = state.pts, n = pts.length;
+    const left = 46, right = 8, top = 6, bottom = 14;
+    const W = w - left - right, H = h - top - bottom;
+    if(n < 2 || W <= 0 || H <= 0) return;
+    const i = chart.idx;
+    let lo = Infinity, hi = -Infinity;
+    for(const p of pts){
+      const v = p.v[i]; if(v < lo) lo = v; if(v > hi) hi = v;
+      if(p.p){const q = p.p[i]; if(q < lo) lo = q; if(q > hi) hi = q;}
+    }
+    if(!(hi > lo)){hi = lo + 1;}
+    const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+    const y = v => top + (1 - (v - lo)/(hi - lo)) * H;
+
+    ctx.font = "11px system-ui,sans-serif"; ctx.fillStyle = COLORS.text; ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 1;
+    for(let g = 0; g <= 3; g++){
+      const val = lo + (hi - lo) * g/3, yy = y(val);
+      ctx.beginPath(); ctx.moveTo(left, yy); ctx.lineTo(w - right, yy); ctx.stroke();
+      ctx.fillText(val.toFixed(Math.abs(hi-lo) < 5 ? 2 : 1), 4, yy + 4);
+    }
+    shade(ctx, pts, n, left, W, top, H);
+    // forecast
+    ctx.strokeStyle = COLORS.amber; ctx.lineWidth = 1; ctx.globalAlpha = .75; ctx.beginPath();
+    let started = false;
+    pts.forEach((p, j) => { if(!p.p) return; const xx = xOf(j,n,left,W), yy = y(p.p[i]);
+      if(started) ctx.lineTo(xx,yy); else {ctx.moveTo(xx,yy); started = true;} });
+    ctx.stroke(); ctx.globalAlpha = 1;
+    // measured
+    ctx.strokeStyle = COLORS.blue; ctx.lineWidth = 1.6; ctx.beginPath();
+    pts.forEach((p, j) => { const xx = xOf(j,n,left,W), yy = y(p.v[i]); j ? ctx.lineTo(xx,yy) : ctx.moveTo(xx,yy); });
+    ctx.stroke();
+    // highlight affected sensor
+    ctx.fillStyle = COLORS.violet;
+    pts.forEach((p, j) => { if(p.y && p.ys.includes(i)){ ctx.fillRect(xOf(j,n,left,W)-1, top + H - 2, 3, 4);} });
+  }
+
+  function shade(ctx, pts, n, left, W, top, H){
+    const step = W / (MAXPTS - 1);
+    ctx.fillStyle = "rgba(255,93,115,.16)";
+    pts.forEach((p, j) => { if(p.a) ctx.fillRect(xOf(j,n,left,W) - step/2, top, step + 0.6, H); });
+    ctx.fillStyle = COLORS.violet;
+    pts.forEach((p, j) => { if(p.y) ctx.fillRect(xOf(j,n,left,W) - step/2, top + H + 3, step + 0.6, 4); });
+  }
+
+  function drawScore(){
+    const c = state.scoreChart; if(!c) return;
+    const {ctx, w, h} = prepare(c.canvas);
+    const pts = state.pts, n = pts.length;
+    const left = 46, right = 8, top = 6, bottom = 14;
+    const W = w - left - right, H = h - top - bottom;
+    if(n < 2 || W <= 0 || H <= 0) return;
+    let mx = 2; for(const p of pts) if(p.s > mx) mx = p.s;
+    mx *= 1.08;
+    const y = v => top + (1 - v/mx) * H;
+    ctx.font = "11px system-ui,sans-serif"; ctx.fillStyle = COLORS.text; ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 1;
+    for(let g = 0; g <= 2; g++){
+      const val = mx * g/2, yy = y(val);
+      ctx.beginPath(); ctx.moveTo(left, yy); ctx.lineTo(w - right, yy); ctx.stroke();
+      ctx.fillText(val.toFixed(1), 4, yy + 4);
+    }
+    shade(ctx, pts, n, left, W, top, H);
+    ctx.setLineDash([5,4]); ctx.strokeStyle = COLORS.red; ctx.beginPath();
+    ctx.moveTo(left, y(1)); ctx.lineTo(w - right, y(1)); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = COLORS.violet; ctx.lineWidth = 1.6; ctx.beginPath();
+    pts.forEach((p, j) => { const xx = xOf(j,n,left,W), yy = y(p.s); j ? ctx.lineTo(xx,yy) : ctx.moveTo(xx,yy); });
+    ctx.stroke();
+  }
+
+  function scheduleDraw(){
+    if(state.drawQueued) return; state.drawQueued = true;
+    requestAnimationFrame(() => { state.drawQueued = false;
+      state.charts.forEach(drawChart); drawScore(); });
+  }
+
+  // ---------- state ingestion
+  function logEvent(cls, t, text){
+    state.logItems.unshift({cls, t, text, ts: state.curTs}); if(state.logItems.length > 40) state.logItems.pop();
+    const box = $("log"); box.textContent = "";
+    state.logItems.forEach(it => {
+      const d = document.createElement("div"); d.className = it.cls;
+      const tm = document.createElement("time"); tm.textContent = it.ts || ("#" + it.t);
+      d.append(tm, document.createTextNode(it.text)); box.append(d);
+    });
+  }
+  const sensorNames = idxs => idxs.map(i => (state.sensors[i] || {}).name || ("sensor " + i)).join(" + ");
+  const pretty = k => (k || "").replace("_", " ");
+
+  function scanEvents(points){
+    for(const p of points){
+      state.curTs = p.ts || null;
+      if(p.y && !state.prevY) logEvent("truth", p.t, `Ground truth: ${pretty(p.k)} on ${sensorNames(p.ys)} started`);
+      if(!p.y && state.prevY) logEvent("truth", p.t, "Ground truth: anomaly ended");
+      if(p.a && !state.prevA) logEvent("alert", p.t, `ALERT raised (score ${p.s.toFixed(1)})`);
+      if(!p.a && state.prevA) logEvent("clear", p.t, "Alert cleared");
+      state.prevY = p.y; state.prevA = p.a;
+    }
+  }
+
+  function setPill(text, cls){ const p = $("pill"); p.textContent = text; p.className = "pill " + cls; }
+
+  function ingest(d){
+    const sig = d.sensors.map(s => s.name).join("|");
+    if(!state.built || sig !== state.sig){ state.sensors = d.sensors; state.sig = sig; build(d.sensors); }
+    if(d.reset){ state.pts = []; state.prevA = state.prevY = 0; }
+    if(d.points.length){
+      scanEvents(d.points);
+      state.pts = state.pts.concat(d.points);
+      if(state.pts.length > MAXPTS) state.pts = state.pts.slice(-MAXPTS);
+    }
+    state.since = d.now; state.paused = d.paused;
+    $("btnPause").textContent = d.paused ? "Resume" : "Pause";
+    if(document.activeElement !== $("speed")) $("speed").value = String(d.speed);
+
+    const last = state.pts[state.pts.length - 1];
+    const learning = d.status === "calibrating" || d.status === "learning";
+    const prog = $("progress");
+    prog.style.display = learning ? "block" : "none";
+    prog.firstElementChild.style.width = (d.progress * 100).toFixed(0) + "%";
+    if(d.status === "error") setPill("Engine error", "bad");
+    else if(d.status === "finished") setPill("Data finished", "off");
+    else if(d.paused) setPill("Paused", "warn");
+    else if(learning) setPill(`Learning baseline ${(d.progress*100).toFixed(0)}%`, "warn");
+    else if(last && last.a) setPill("ALERT", "bad");
+    else if(d.status === "starting") setPill("Starting…", "off");
+    else setPill("Monitoring · normal", "ok");
+
+    const m = d.metrics, k = state.kpis;
+    const L = d.has_labels;
+    $("legTruth").style.display = L ? "" : "none";
+    $("kind").style.display = $("btnInject").style.display = d.can_inject ? "" : "none";
+    k.ticks.textContent = m.ticks;
+    k.alerts.textContent = m.alert_events;
+    k.episodes.textContent = !L ? "n/a" : (m.episodes ? `${m.detected} / ${m.episodes}` : "—");
+    k.delay.textContent = L ? fmtNum(m.mean_delay) : "n/a";
+    k.falsealerts.textContent = L ? m.false_alert_events : "n/a";
+    k.precision.textContent = L ? fmtPct(m.precision) : "n/a";
+    k.recall.textContent = L ? fmtPct(m.recall) : "n/a";
+    k.f1.textContent = L ? fmtPct(m.f1) : "n/a";
+    if(last){
+      state.sensors.forEach((s, i) => { const e = $("val" + i); if(e) e.textContent = last.v[i].toFixed(2); });
+      const vs = $("valScore"); if(vs) vs.textContent = last.s.toFixed(2);
+    }
+    if(d.error && d.error !== state.lastError){ state.lastError = d.error; toast("Engine error: " + d.error); }
+    scheduleDraw();
+  }
+
+  // ---------- local engine: everything runs inside this browser tab
+  const SS = window.StreamSentinel;
+  let engine = null, lastFrame = performance.now(), loaded = null;   // loaded = {text, name} for CSV mode
+
+  function resetUi(){
+    Object.assign(state, {since:-1, pts:[], sensors:[], sig:"", prevA:0, prevY:0, logItems:[], built:false, lastError:null, curTs:null});
+    const box = $("log"); box.textContent = "";
+    const d = document.createElement("div"); d.className = "empty"; d.textContent = "Waiting for events…"; box.append(d);
+  }
+  function showNotes(src){
+    const n = $("notes"); n.textContent = "";
+    if(!src.describe){ n.style.display = "none"; return; }
+    const lines = [src.describe()].concat((src.warnings || []).map(w => "warning: " + w));
+    lines.forEach(t => { const p = document.createElement("div"); p.textContent = t; n.append(p); });
+    n.style.display = "block";
+  }
+  function startEngine(src){
+    let eng;
+    try{ eng = new SS.StreamEngine({source: src, sensitivity: $("sens").value}); }
+    catch(e){ toast("Could not start: " + e.message); return false; }
+    engine = eng; resetUi(); showNotes(src); lastFrame = performance.now();
+    ingest(engine.snapshot(-1));
+    return true;
+  }
+  function restart(){
+    try{ startEngine(loaded ? new SS.CsvSource(loaded.text, {name: loaded.name}) : new SS.SimSource()); }
+    catch(e){ toast(e.message); }
+  }
+  function frame(){
+    const now = performance.now(), dt = Math.min(1, Math.max(0, (now - lastFrame) / 1000)); lastFrame = now;
+    try{ engine.advance(dt); ingest(engine.snapshot(state.since)); }
+    catch(e){ toast("Unexpected error: " + e.message); }
+  }
+
+  // ---------- controls
+  $("btnPause").addEventListener("click", () => { if(engine.paused) engine.resume(); else engine.pause(); frame(); });
+  $("speed").addEventListener("change", e => { engine.setSpeed(parseFloat(e.target.value)); });
+  $("btnInject").addEventListener("click", () => {
+    const r = engine.inject($("kind").value || null);
+    toast(r[0] ? "Anomaly injected" : r[1]);
+  });
+  $("sens").addEventListener("change", restart);
+  $("btnSim").addEventListener("click", () => { loaded = null; restart(); });
+  $("btnCsv").addEventListener("click", () => $("file").click());
+  $("file").addEventListener("change", async ev => {
+    const f = ev.target.files && ev.target.files[0]; ev.target.value = "";
+    if(!f) return;
+    if(f.size > 60 * 1024 * 1024){ toast("File is too large (max 60 MB)"); return; }
+    try{
+      const text = await f.text();
+      const src = new SS.CsvSource(text, {name: f.name});          // validates the file
+      loaded = {text, name: f.name};
+      startEngine(src);
+    }catch(e){ toast(e.message); }
+  });
+  $("btnDl").addEventListener("click", () => {
+    if(!engine.events.length){ toast("No alerts yet"); return; }
+    const url = URL.createObjectURL(new Blob([engine.eventsCsv()], {type: "text/csv"}));
+    const a = document.createElement("a"); a.href = url; a.download = "alerts.csv";
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  });
+  window.addEventListener("resize", scheduleDraw);
+  startEngine(new SS.SimSource());
+  setInterval(frame, 80);
+})();
+</script>
+</body>
+</html>
